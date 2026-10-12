@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 5 * * *" # daily, to catch OpenClaw or /v1/models changes that break the plugin
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - name: Verify package contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack --silent)"
+          contents="$(tar -tzf "$tarball")"
+          for f in package/dist/index.js package/openclaw.plugin.json package/assets/icon.png; do
+            grep -qx "$f" <<<"$contents" || { echo "missing $f"; exit 1; }
+          done
+      - name: ClawHub package validation
+        run: npx -y clawhub@0.23.3 package validate .
+
+  live:
+    needs: build-test-pack
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Live discovery, completion and tool call
+        env:
+          LOWROUTER_API_KEY: ${{ secrets.LOWROUTER_API_KEY }}
+        run: |
+          if [ -z "$LOWROUTER_API_KEY" ]; then echo "LOWROUTER_API_KEY secret not set; skipping"; exit 0; fi
+          OPENCLAW_LIVE_TEST=1 LOWROUTER_LIVE_TEST=1 npm run test:live
