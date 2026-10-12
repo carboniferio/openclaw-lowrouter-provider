@@ -1,0 +1,53 @@
+name: Package Publish
+
+# Releases to ClawHub through trusted publishing (GitHub OIDC): no stored token.
+# Run from the Actions tab once main carries the new version and a fresh
+# snapshot (`npm run gen:catalog`). Leave dry_run on to preview.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview only; nothing is published.
+        type: boolean
+        default: true
+      changelog:
+        description: Release notes shown on ClawHub.
+        type: string
+        required: false
+
+permissions: {}
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Pack
+        run: npm pack --pack-destination "$RUNNER_TEMP/package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clawhub-package
+          path: ${{ runner.temp }}/package/*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: pack
+    permissions:
+      contents: read
+      id-token: write
+    uses: openclaw/clawhub/.github/workflows/package-publish.yml@main
+    with:
+      owner: lowrouter
+      dry_run: ${{ inputs.dry_run }}
+      changelog: ${{ inputs.changelog }}
+      topics: llm,router,eu,carbon-aware,openai-compatible
+      package_artifact_name: clawhub-package

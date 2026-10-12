@@ -15,6 +15,9 @@ openclaw plugins install clawhub:@lowrouter/openclaw-provider
 openclaw gateway restart
 ```
 
+OpenClaw asks you to approve the plugin's capabilities during install. In a script, add
+`--accept-capabilities`.
+
 Get a key at [lowrouter.ai/app/keys](https://lowrouter.ai/app/keys), then either run onboarding
 or export it before starting OpenClaw:
 
@@ -78,13 +81,13 @@ and one tool call on the default model (`LOWROUTER_LIVE_MODELS=a,b` picks others
 OPENCLAW_LIVE_TEST=1 LOWROUTER_LIVE_TEST=1 LOWROUTER_API_KEY=sk-lr-... npm run test:live
 ```
 
-Before a release, refresh the bundled snapshot and validate the package:
+To release:
 
-```bash
-LOWROUTER_API_KEY=sk-lr-... npm run gen:catalog
-npx clawhub package validate .
-npx clawhub package publish . --dry-run
-```
+1. Bump `version` in `package.json` and refresh the bundled snapshot:
+   `LOWROUTER_API_KEY=sk-lr-... npm run gen:catalog`.
+2. Check the package: `npx clawhub package validate .`.
+3. Push to `main`, then run the **Package Publish** workflow from the Actions tab, first with
+   `dry_run` on. It publishes to ClawHub through trusted publishing, with no stored token.
 
 ## License
 
