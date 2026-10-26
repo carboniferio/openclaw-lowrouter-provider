@@ -4,6 +4,7 @@ import {
   type AssistantMessage,
   type Context,
   type Model,
+  type SimpleStreamOptions,
   type Tool,
 } from "openclaw/plugin-sdk/llm";
 import type { ModelDefinitionConfig } from "openclaw/plugin-sdk/provider-model-shared";
@@ -31,6 +32,8 @@ const LIVE_MODEL_IDS = (process.env.LOWROUTER_LIVE_MODELS ?? "")
   .split(",")
   .map((id) => id.trim())
   .filter(Boolean);
+// Prompt caching and reasoning effort run on this Claude model.
+const LIVE_CLAUDE_MODEL_ID = "auto/anthropic/claude-haiku-4.5";
 
 function restoreEnvVar(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -70,6 +73,39 @@ function asLiveModel(model: ModelDefinitionConfig) {
     baseUrl: LOWROUTER_BASE_URL,
     api: "openai-completions",
   } as Model<"openai-completions">;
+}
+
+async function requireLiveModel(modelId: string) {
+  const model = (await runLiveCatalog()).find((candidate) => candidate.id === modelId);
+  if (!model) {
+    throw new Error(`live catalog did not include ${modelId}`);
+  }
+  return asLiveModel(model);
+}
+
+/** Streams through the plugin's own wrapper, as OpenClaw's agent runtime does. */
+async function streamThroughPlugin(
+  model: Model<"openai-completions">,
+  context: Context,
+  options: SimpleStreamOptions,
+): Promise<AssistantMessage> {
+  const provider = await registerSingleProviderPlugin(lowRouterPlugin);
+  const streamFn = provider.wrapStreamFn?.({
+    provider: "lowrouter",
+    modelId: model.id,
+    model,
+    streamFn: streamSimple,
+  } as never);
+  if (!streamFn) {
+    throw new Error("expected a LowRouter stream wrapper");
+  }
+  const response = await (await streamFn(model, context, { apiKey: LIVE_VALUE, ...options })).result();
+  if (response.stopReason === "error") {
+    throw new Error(response.errorMessage || `live completion on ${model.id} failed`);
+  }
+  // The EUR total LowRouter bills is not shown as USD.
+  expect(response.usage.cost).not.toHaveProperty("totalOrigin");
+  return response;
 }
 
 function liveProbeTool(): Tool {
@@ -156,6 +192,49 @@ describeLive("LowRouter plugin live", () => {
     expect(toolCall.arguments).toMatchObject({ value: "lowrouter" });
     console.info(
       `[lowrouter:live] ${modelId} tool call: ${response.usage.input} in / ${response.usage.output} out`,
+    );
+  }, 120_000);
+
+  it("reads Claude's prompt cache on a repeated long prompt", async () => {
+    const model = await requireLiveModel(LIVE_CLAUDE_MODEL_ID);
+    expect(model.compat).toMatchObject({ cacheControlFormat: "anthropic" });
+    // About 5k tokens, above Claude's minimum cacheable prompt.
+    const systemPrompt = Array.from(
+      { length: 300 },
+      (_, line) => `Reference line ${line}: LowRouter routes each request to a low-carbon host.`,
+    ).join("\n");
+    const context = (): Context => ({
+      systemPrompt,
+      messages: [{ role: "user", content: "Reply with the word ok.", timestamp: Date.now() }],
+    });
+    const first = await streamThroughPlugin(model, context(), { maxTokens: 16 });
+    const second = await streamThroughPlugin(model, context(), { maxTokens: 16 });
+    console.info(
+      `[lowrouter:live] ${model.id} cache: write ${first.usage.cacheWrite}, then read ${second.usage.cacheRead} of ${second.usage.input + second.usage.cacheRead}`,
+    );
+    expect(second.usage.cacheRead).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("accepts a reasoning effort on a reasoning model", async () => {
+    const model = await requireLiveModel(LIVE_CLAUDE_MODEL_ID);
+    expect(model).toMatchObject({ reasoning: true, thinkingLevelMap: { low: "low" } });
+    const payloads: unknown[] = [];
+    const response = await streamThroughPlugin(
+      model,
+      { messages: [{ role: "user", content: "What is 17 + 25? Answer with the number.", timestamp: Date.now() }] },
+      {
+        reasoning: "low",
+        maxTokens: 4096,
+        onPayload: (payload) => {
+          payloads.push(payload);
+          return undefined;
+        },
+      },
+    );
+    expect(payloads).toEqual([expect.objectContaining({ reasoning_effort: "low" })]);
+    expect(response.content.some((block) => block.type === "text" && block.text.includes("42"))).toBe(true);
+    console.info(
+      `[lowrouter:live] ${model.id} effort low: thinking returned ${response.content.some((block) => block.type === "thinking")}`,
     );
   }, 120_000);
 });

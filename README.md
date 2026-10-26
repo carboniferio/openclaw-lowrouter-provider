@@ -49,20 +49,29 @@ Pinned routes (`<host>/<creator>/<model>`) and jurisdiction-scoped IDs
 (`auto/<creator>/<model>/eu`) stay out of the list. They still work when you type them, for
 example `openclaw models set lowrouter/auto/mistralai/mistral-large-2512/eu`.
 
-Context windows, output limits, input types and reasoning support come from `/v1/models`.
-A model without a published context window gets 32,768 tokens, so OpenClaw compacts early
+Context windows, output limits and input types come from `/v1/models`. So do thinking levels:
+a model offers the levels its routes accept, from `auto_routing.reasoning_effort`, and OpenClaw
+sends the one you pick as `reasoning_effort`. A model without a published context window gets 32,768 tokens, so OpenClaw compacts early
 rather than sending a prompt the model rejects. A model without an output limit gets OpenClaw's
 8,192 default.
 
 Without a key or network, OpenClaw uses the snapshot bundled with the release. The snapshot is
 generated from the same endpoint by `npm run gen:catalog`; nothing in it is written by hand.
 
+Claude models (`auto/anthropic/...`, and aliases that point at one) use prompt caching. OpenClaw
+marks the stable start of each prompt with `cache_control`, and LowRouter serves the repeat from
+the cache at the cache-read price.
+
 ## Cost
 
 LowRouter bills in euros, for the route that served the request. OpenClaw tracks cost in US
-dollars, so the plugin reads USD prices (`?currency=usd`). An `auto/` model has several routes
-at different prices, and the plugin shows the dearest one. OpenClaw's cost estimate can run high,
-never low. What you were charged is in each response's `usage.cost` (EUR) and on
+dollars, so the plugin reads USD prices (`?currency=usd`) and OpenClaw shows its own estimate
+from them. An `auto/` model has several routes at different prices, and the plugin uses the
+dearest one. The estimate can still run low on Claude: where LowRouter publishes no cache price,
+cached tokens count as free.
+
+Each response's `usage.cost` is the amount charged, in euros. OpenClaw would record that number
+as dollars, so the plugin drops it until LowRouter reports a USD amount. Your charges are on
 [lowrouter.ai/app](https://lowrouter.ai/app).
 
 ## Development
@@ -75,7 +84,8 @@ npm pack --dry-run
 ```
 
 Live tests need a key and explicit opt-in. They run catalog discovery, one streamed completion
-and one tool call on the default model (`LOWROUTER_LIVE_MODELS=a,b` picks others):
+and one tool call on the default model (`LOWROUTER_LIVE_MODELS=a,b` picks others), then a
+repeated prompt that must hit the cache and a reasoning effort, both on Claude Haiku 4.5:
 
 ```bash
 OPENCLAW_LIVE_TEST=1 LOWROUTER_LIVE_TEST=1 LOWROUTER_API_KEY=sk-lr-... npm run test:live

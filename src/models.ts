@@ -23,12 +23,28 @@ const DEFAULT_MAX_TOKENS = 8_192;
 
 // LowRouter streams a final usage chunk and accepts OpenAI tool calling on every
 // listed model. Some upstream hosts reject the `developer` role and `store`.
+// OpenClaw sends no `reasoning_effort` to a non-OpenAI base URL unless told to;
+// LowRouter takes it on every model that publishes effort levels.
 const LOWROUTER_MODEL_COMPAT: ModelCompatConfig = {
   supportsStore: false,
   supportsDeveloperRole: false,
   supportsUsageInStreaming: true,
   supportsTools: true,
+  supportsReasoningEffort: true,
 };
+
+// LowRouter caches Claude only where the request carries `cache_control`.
+const CLAUDE_MODEL_COMPAT: ModelCompatConfig = {
+  ...LOWROUTER_MODEL_COMPAT,
+  cacheControlFormat: "anthropic",
+};
+
+const CLAUDE_ID_PREFIX = "auto/anthropic/";
+
+// `reasoning_effort` values LowRouter publishes, in OpenClaw's level order.
+const EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+type EffortLevel = (typeof EFFORT_LEVELS)[number];
+type ThinkingLevelMap = NonNullable<ModelDefinitionConfig["thinkingLevelMap"]>;
 
 /** Base URL for LowRouter's OpenAI-compatible API. */
 export const LOWROUTER_BASE_URL = LOWROUTER_MANIFEST_CATALOG.baseUrl;
@@ -57,7 +73,7 @@ export function buildStaticLowRouterModels(): ModelDefinitionConfig[] {
     catalog: LOWROUTER_MANIFEST_CATALOG,
   }).models.map((normalized) => ({
     ...normalized,
-    compat: { ...LOWROUTER_MODEL_COMPAT, ...normalized.compat },
+    compat: { ...modelCompat(isClaudeModelId(normalized.id)), ...normalized.compat },
   }));
 }
 
@@ -70,8 +86,10 @@ type LowRouterLiveModelRow = {
   supported_parameters?: unknown;
   context_length?: unknown;
   max_output_tokens?: unknown;
+  alias_target?: unknown;
   capabilities?: { function_calling?: unknown; input_modalities?: unknown };
   auto_routing?: {
+    reasoning_effort?: unknown;
     pricing_range?: {
       currency?: unknown;
       prompt_per_1m_tokens?: PriceRange;
@@ -116,6 +134,27 @@ export function isPickerModelId(id: string): boolean {
   return (parts[0] === "auto" && parts.length === 3) || (parts[0] === "alias" && parts.length === 2);
 }
 
+function isClaudeModelId(id: string): boolean {
+  return id.startsWith(CLAUDE_ID_PREFIX);
+}
+
+function modelCompat(claude: boolean): ModelCompatConfig {
+  return { ...(claude ? CLAUDE_MODEL_COMPAT : LOWROUTER_MODEL_COMPAT) };
+}
+
+// `alias/` ids whose `alias_target` was Claude in the last live discovery. The
+// cache-TTL hook gets only a model id, and only `/v1/models` names an alias's target.
+const claudeAliasIds = new Set<string>();
+
+/**
+ * Whether OpenClaw's cache-TTL pruning should wait out a model's prompt cache:
+ * Claude ids, and aliases that discovery saw pointing at one.
+ */
+export function isLowRouterCacheTtlModelId(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return isClaudeModelId(id) || claudeAliasIds.has(id);
+}
+
 function readInput(
   value: unknown,
   fallback: ModelDefinitionConfig | undefined,
@@ -131,14 +170,65 @@ function readName(value: unknown, id: string): string {
 }
 
 /**
- * A model reasons when `/v1/models` lists a reasoning control for it. Without
- * `supported_parameters` the bundled row decides; OpenClaw then sends no effort.
+ * OpenClaw's thinking levels mapped onto the `reasoning_effort` values the model's
+ * routes accept. An unpublished base level is `null`, so OpenClaw does not offer
+ * it; `xhigh` is offered only when mapped. `off` stays unmapped: OpenClaw then
+ * sends no effort and the model keeps its default.
  */
-function readReasoning(value: unknown, fallback: ModelDefinitionConfig | undefined): boolean {
-  if (!Array.isArray(value)) {
-    return fallback?.reasoning ?? false;
+function thinkingLevelMap(levels: readonly EffortLevel[]): ThinkingLevelMap {
+  const map: ThinkingLevelMap = {};
+  for (const level of EFFORT_LEVELS) {
+    if (levels.includes(level)) {
+      map[level] = level;
+    } else if (level !== "xhigh") {
+      map[level] = null;
+    }
   }
-  return value.includes("reasoning_effort") || value.includes("reasoning");
+  return map;
+}
+
+/**
+ * Reasoning support. `auto_routing.reasoning_effort` lists the levels every
+ * default route applies as sent; an `auto/` row without it gets no effort. A row
+ * without `auto_routing` (most `alias/` models) falls back to
+ * `supported_parameters`, then to the bundled row.
+ */
+function readReasoning(
+  row: LowRouterLiveModelRow,
+  fallback: ModelDefinitionConfig | undefined,
+): Pick<ModelDefinitionConfig, "reasoning" | "thinkingLevelMap"> {
+  const routing = asRecord(row.auto_routing);
+  if (routing) {
+    const published = Array.isArray(routing.reasoning_effort) ? routing.reasoning_effort : [];
+    const levels = EFFORT_LEVELS.filter((level) => published.includes(level));
+    return levels.length > 0
+      ? { reasoning: true, thinkingLevelMap: thinkingLevelMap(levels) }
+      : { reasoning: false };
+  }
+  const params = row.supported_parameters;
+  if (Array.isArray(params) && (params.includes("reasoning_effort") || params.includes("reasoning"))) {
+    return { reasoning: true };
+  }
+  return fallback?.thinkingLevelMap
+    ? { reasoning: fallback.reasoning, thinkingLevelMap: fallback.thinkingLevelMap }
+    : { reasoning: fallback?.reasoning ?? false };
+}
+
+/**
+ * Claude rows: `auto/anthropic/` ids, and `alias/` ids whose `alias_target` is
+ * one. Records the alias for the cache-TTL hook either way.
+ */
+function readClaude(id: string, aliasTarget: unknown): boolean {
+  if (!id.startsWith("alias/")) {
+    return isClaudeModelId(id);
+  }
+  const claude = typeof aliasTarget === "string" && isClaudeModelId(aliasTarget.trim());
+  if (claude) {
+    claudeAliasIds.add(id.toLowerCase());
+  } else {
+    claudeAliasIds.delete(id.toLowerCase());
+  }
+  return claude;
 }
 
 function projectLiveModel(
@@ -172,7 +262,7 @@ function projectLiveModel(
   return {
     id,
     name: readName(row.name, id),
-    reasoning: readReasoning(row.supported_parameters, fallback),
+    ...readReasoning(row, fallback),
     input: readInput(row.capabilities?.input_modalities, fallback),
     cost: {
       input: readRangeMax(usd?.prompt_per_1m_tokens) ?? fallback?.cost.input ?? 0,
@@ -182,7 +272,7 @@ function projectLiveModel(
     },
     contextWindow,
     maxTokens,
-    compat: fallback?.compat ?? { ...LOWROUTER_MODEL_COMPAT },
+    compat: modelCompat(readClaude(id, row.alias_target)),
   };
 }
 
@@ -236,6 +326,6 @@ export function resolveLowRouterDynamicModel(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: DEFAULT_MAX_TOKENS,
-    compat: { ...LOWROUTER_MODEL_COMPAT },
+    compat: modelCompat(isClaudeModelId(id)),
   };
 }

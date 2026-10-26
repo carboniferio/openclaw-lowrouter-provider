@@ -6,12 +6,14 @@ import { buildProviderReplayFamilyHooks } from "openclaw/plugin-sdk/provider-mod
 import { buildProviderToolCompatFamilyHooks } from "openclaw/plugin-sdk/provider-tools";
 import manifest from "../openclaw.plugin.json" with { type: "json" };
 import {
+  isLowRouterCacheTtlModelId,
   LOWROUTER_MODELS_PATH,
   projectLowRouterLiveModels,
   resolveLowRouterDynamicModel,
 } from "./models.js";
 import { applyLowRouterConfig } from "./onboard.js";
 import { buildStaticLowRouterProvider } from "./provider-catalog.js";
+import { wrapLowRouterStreamFn } from "./stream.js";
 
 const PROVIDER_ID = "lowrouter";
 
@@ -53,6 +55,10 @@ const lowRouterPlugin: OpenClawPluginDefinition = defineSingleProviderPluginEntr
         typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl : undefined;
       return resolveLowRouterDynamicModel(modelId, baseUrl);
     },
+    // Claude's prompt cache expires; other models keep OpenClaw's default.
+    isCacheTtlEligible: ({ modelId }) => (isLowRouterCacheTtlModelId(modelId) ? true : undefined),
+    wrapStreamFn: wrapLowRouterStreamFn,
+    wrapSimpleCompletionStreamFn: wrapLowRouterStreamFn,
     ...buildProviderReplayFamilyHooks({
       family: "openai-compatible",
       dropReasoningFromHistory: false,

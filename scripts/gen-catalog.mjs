@@ -29,9 +29,10 @@ if (!Array.isArray(body?.data)) {
 }
 
 // Generate from the live rows alone: earlier bundled rows must not leak into the snapshot.
-const models = projectLowRouterLiveModels(body.data, { useBundledFallbacks: false }).map(
-  ({ compat: _compat, ...row }) => row,
-);
+// The key's own `alias/` models are private to its account and stay out of it too.
+const models = projectLowRouterLiveModels(body.data, { useBundledFallbacks: false })
+  .filter((model) => !model.id.startsWith("alias/"))
+  .map(({ compat: _compat, ...row }) => row);
 if (models.length === 0) {
   throw new Error(`GET ${url}: 0 usable models; refusing to write an empty catalog`);
 }
