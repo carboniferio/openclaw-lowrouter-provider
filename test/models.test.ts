@@ -275,6 +275,17 @@ describe("LowRouter live projection", () => {
     expect(effort?.compat).not.toHaveProperty("supportsReasoningEffort");
     expect(plain?.reasoning).toBe(false);
     expect(known).toMatchObject({ reasoning: true, thinkingLevelMap: bundled.thinkingLevelMap });
+
+    // A published list wins over the bundled row, which keeps its levels only when allowed.
+    const [denied] = projectLowRouterLiveModels([
+      liveRow({ id: bundled.id, auto_routing: undefined, supported_parameters: ["tools"] }),
+    ]);
+    expect(denied?.reasoning).toBe(false);
+    expect(denied?.compat).not.toHaveProperty("supportsReasoningEffort");
+    const [allowed] = projectLowRouterLiveModels([
+      liveRow({ id: bundled.id, auto_routing: undefined, supported_parameters: ["reasoning_effort"] }),
+    ]);
+    expect(allowed).toMatchObject({ reasoning: true, thinkingLevelMap: bundled.thinkingLevelMap });
   });
 
   it("marks Claude and aliases to Claude for prompt caching", () => {

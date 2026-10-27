@@ -219,12 +219,14 @@ function readReasoning(
       : { reasoning: false };
   }
   const params = row.supported_parameters;
-  if (Array.isArray(params) && (params.includes("reasoning_effort") || params.includes("reasoning"))) {
-    return { reasoning: true };
+  // A published list is authoritative: without a reasoning control the bundled row
+  // must not turn effort back on.
+  if (Array.isArray(params) && !params.includes("reasoning_effort") && !params.includes("reasoning")) {
+    return { reasoning: false };
   }
   return fallback?.thinkingLevelMap
     ? { reasoning: fallback.reasoning, thinkingLevelMap: fallback.thinkingLevelMap }
-    : { reasoning: fallback?.reasoning ?? false };
+    : { reasoning: Array.isArray(params) || (fallback?.reasoning ?? false) };
 }
 
 /** Claude rows: `auto/anthropic/` ids, and `alias/` ids whose `alias_target` is one. */
@@ -335,6 +337,8 @@ export function resolveLowRouterDynamicModel(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: DEFAULT_MAX_TOKENS,
-    compat: modelCompat(isClaudeModelId(id)),
+    // Same test as the cache-TTL hook, so an alias discovery saw pointing at Claude
+    // also gets `cache_control`.
+    compat: modelCompat(isLowRouterCacheTtlModelId(id)),
   };
 }
