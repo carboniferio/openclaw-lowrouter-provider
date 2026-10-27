@@ -55,6 +55,10 @@ function withEstimatedCost(underlying: StreamFn): StreamFn {
  * Agent turns. OpenClaw's agent runtime streams through its managed transport,
  * which sends base-URL query parameters with each request, so LowRouter's hosted
  * API is asked for USD and its billed total is kept. Other base URLs get the estimate.
+ *
+ * With a provider wrapper in place, OpenClaw skips its own DeepSeek V4 and MiMo
+ * thinking-payload wrappers. LowRouter takes `reasoning_effort` for those models
+ * and needs neither: tool-calling turns with thinking on and off pass through it.
  */
 export function wrapLowRouterStreamFn(ctx: ProviderWrapStreamFnContext): StreamFn {
   if (!ctx.streamFn) {
@@ -65,9 +69,21 @@ export function wrapLowRouterStreamFn(ctx: ProviderWrapStreamFnContext): StreamF
   return (model, context, options) => {
     const usdBaseUrl = lowRouterUsdBaseUrl(model.baseUrl);
     return usdBaseUrl
-      ? underlying({ ...model, baseUrl: usdBaseUrl }, context, options)
+      ? underlying(withBaseUrl(model, usdBaseUrl), context, options)
       : estimated(model, context, options);
   };
+}
+
+/**
+ * Copies the model with another base URL. A spread would drop the non-enumerable
+ * symbol properties OpenClaw binds to a prepared model (its LLM runtime), so the
+ * copy keeps every own property descriptor.
+ */
+function withBaseUrl<M extends { baseUrl: string }>(model: M, baseUrl: string): M {
+  return Object.create(Object.getPrototypeOf(model), {
+    ...Object.getOwnPropertyDescriptors(model),
+    baseUrl: { value: baseUrl, writable: true, enumerable: true, configurable: true },
+  }) as M;
 }
 
 /**
