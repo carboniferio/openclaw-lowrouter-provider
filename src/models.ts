@@ -43,7 +43,6 @@ const CLAUDE_ID_PREFIX = "auto/anthropic/";
 
 // `reasoning_effort` values LowRouter publishes, in OpenClaw's level order.
 const EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh"] as const;
-type EffortLevel = (typeof EFFORT_LEVELS)[number];
 type ThinkingLevelMap = NonNullable<ModelDefinitionConfig["thinkingLevelMap"]>;
 
 /** Base URL for LowRouter's OpenAI-compatible API. */
@@ -145,6 +144,7 @@ function modelCompat(claude: boolean): ModelCompatConfig {
 
 // `alias/` ids whose `alias_target` was Claude in the last live discovery. The
 // cache-TTL hook gets only a model id, and only `/v1/models` names an alias's target.
+// Rebuilt by each projection, so a deleted or retargeted alias drops out.
 const claudeAliasIds = new Set<string>();
 
 /**
@@ -176,7 +176,7 @@ function readName(value: unknown, id: string): string {
  * it; `xhigh` is offered only when mapped. `off` stays unmapped: OpenClaw then
  * sends no effort and the model keeps its default.
  */
-function thinkingLevelMap(levels: readonly EffortLevel[]): ThinkingLevelMap {
+function thinkingLevelMap(levels: readonly unknown[]): ThinkingLevelMap {
   const map: ThinkingLevelMap = {};
   for (const level of EFFORT_LEVELS) {
     if (levels.includes(level)) {
@@ -201,9 +201,8 @@ function readReasoning(
   const routing = asRecord(row.auto_routing);
   if (routing) {
     const published = Array.isArray(routing.reasoning_effort) ? routing.reasoning_effort : [];
-    const levels = EFFORT_LEVELS.filter((level) => published.includes(level));
-    return levels.length > 0
-      ? { reasoning: true, thinkingLevelMap: thinkingLevelMap(levels) }
+    return EFFORT_LEVELS.some((level) => published.includes(level))
+      ? { reasoning: true, thinkingLevelMap: thinkingLevelMap(published) }
       : { reasoning: false };
   }
   const params = row.supported_parameters;
@@ -215,21 +214,12 @@ function readReasoning(
     : { reasoning: fallback?.reasoning ?? false };
 }
 
-/**
- * Claude rows: `auto/anthropic/` ids, and `alias/` ids whose `alias_target` is
- * one. Records the alias for the cache-TTL hook either way.
- */
+/** Claude rows: `auto/anthropic/` ids, and `alias/` ids whose `alias_target` is one. */
 function readClaude(id: string, aliasTarget: unknown): boolean {
   if (!id.startsWith("alias/")) {
     return isClaudeModelId(id);
   }
-  const claude = typeof aliasTarget === "string" && isClaudeModelId(aliasTarget.trim());
-  if (claude) {
-    claudeAliasIds.add(id.toLowerCase());
-  } else {
-    claudeAliasIds.delete(id.toLowerCase());
-  }
-  return claude;
+  return typeof aliasTarget === "string" && isClaudeModelId(aliasTarget.trim());
 }
 
 function projectLiveModel(
@@ -300,6 +290,12 @@ export function projectLowRouterLiveModels(
     }
     seen.add(model.id);
     models.push(model);
+  }
+  claudeAliasIds.clear();
+  for (const model of models) {
+    if (model.id.startsWith("alias/") && model.compat?.cacheControlFormat === "anthropic") {
+      claudeAliasIds.add(model.id.toLowerCase());
+    }
   }
   return models;
 }

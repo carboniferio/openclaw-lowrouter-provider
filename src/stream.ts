@@ -1,29 +1,18 @@
-/** LowRouter stream wrapper: keeps OpenClaw's cost in US dollars. */
-import type { ProviderPlugin, ProviderWrapStreamFnContext } from "openclaw/plugin-sdk/plugin-entry";
-import { streamSimple } from "openclaw/plugin-sdk/llm";
+/** LowRouter stream wrappers: keep OpenClaw's cost in US dollars. */
+import type { ProviderWrapStreamFnContext } from "openclaw/plugin-sdk/plugin-entry";
+import { streamSimple, type StreamFn } from "openclaw/plugin-sdk/llm";
 import { transformProviderStreamMessages } from "openclaw/plugin-sdk/provider-stream-shared";
+import { asFiniteNumber, asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { LOWROUTER_BASE_URL } from "./models.js";
 
-type StreamFn = NonNullable<ReturnType<NonNullable<ProviderPlugin["wrapStreamFn"]>>>;
-
 const LOWROUTER_HOST = new URL(LOWROUTER_BASE_URL).host;
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function finiteOrZero(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
 
 /**
  * LowRouter's hosted API reports `usage.cost` in USD when asked with `?currency=usd`.
  * Any other base URL, such as a proxy or another LowRouter deployment, may not, so
  * it gets `undefined`.
  */
-export function lowRouterUsdBaseUrl(baseUrl: string | undefined): string | undefined {
+function lowRouterUsdBaseUrl(baseUrl: string | undefined): string | undefined {
   let url: URL;
   try {
     url = new URL(baseUrl ?? "");
@@ -44,28 +33,22 @@ export function lowRouterUsdBaseUrl(baseUrl: string | undefined): string | undef
  * OpenClaw drops the response's `currency` before any plugin hook sees it, so this
  * cannot be decided per response.
  */
-export function dropProviderBilledCost(message: unknown): void {
-  const cost = asRecord(asRecord(asRecord(message)?.usage)?.cost);
+function dropProviderBilledCost(message: unknown): void {
+  const cost = asOptionalRecord(asOptionalRecord(asOptionalRecord(message)?.usage)?.cost);
   if (cost?.totalOrigin !== "provider-billed") {
     return;
   }
   delete cost.totalOrigin;
   cost.total =
-    finiteOrZero(cost.input) +
-    finiteOrZero(cost.output) +
-    finiteOrZero(cost.cacheRead) +
-    finiteOrZero(cost.cacheWrite);
+    (asFiniteNumber(cost.input) ?? 0) +
+    (asFiniteNumber(cost.output) ?? 0) +
+    (asFiniteNumber(cost.cacheRead) ?? 0) +
+    (asFiniteNumber(cost.cacheWrite) ?? 0);
 }
 
 function withEstimatedCost(underlying: StreamFn): StreamFn {
-  return (model, context, options) => {
-    const stream = underlying(model, context, options);
-    return "then" in stream
-      ? Promise.resolve(stream).then((resolved) =>
-          transformProviderStreamMessages(resolved, dropProviderBilledCost),
-        )
-      : transformProviderStreamMessages(stream, dropProviderBilledCost);
-  };
+  return async (model, context, options) =>
+    transformProviderStreamMessages(await underlying(model, context, options), dropProviderBilledCost);
 }
 
 /**
