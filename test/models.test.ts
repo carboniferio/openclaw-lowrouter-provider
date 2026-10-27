@@ -77,8 +77,10 @@ describe("LowRouter bundled catalog", () => {
         supportsDeveloperRole: false,
         supportsUsageInStreaming: true,
         supportsTools: true,
-        supportsReasoningEffort: true,
       });
+      expect(model.compat?.supportsReasoningEffort, model.id).toBe(
+        model.thinkingLevelMap ? true : undefined,
+      );
       expect(model.compat?.cacheControlFormat, model.id).toBe(
         model.id.startsWith("auto/anthropic/") ? "anthropic" : undefined,
       );
@@ -245,6 +247,8 @@ describe("LowRouter live projection", () => {
       thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high" },
     });
     expect(some?.thinkingLevelMap).not.toHaveProperty("xhigh");
+    // OpenClaw then sends no effort for `off` rather than an unpublished "none".
+    expect(some?.compat?.supportedReasoningEfforts).toEqual(["low", "high"]);
     expect(all?.thinkingLevelMap).toEqual({
       minimal: "minimal",
       low: "low",
@@ -267,6 +271,8 @@ describe("LowRouter live projection", () => {
     ]);
     expect(effort).toMatchObject({ reasoning: true });
     expect(effort).not.toHaveProperty("thinkingLevelMap");
+    // Without published levels OpenClaw sends no effort at all.
+    expect(effort?.compat).not.toHaveProperty("supportsReasoningEffort");
     expect(plain?.reasoning).toBe(false);
     expect(known).toMatchObject({ reasoning: true, thinkingLevelMap: bundled.thinkingLevelMap });
   });

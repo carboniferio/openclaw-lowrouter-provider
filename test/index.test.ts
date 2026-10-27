@@ -124,7 +124,12 @@ function lowRouterSse(currency: "USD" | "EUR"): Response {
 type StreamHook = "wrapStreamFn" | "wrapSimpleCompletionStreamFn";
 
 /** Streams one Claude turn through a LowRouter stream hook against a mocked API. */
-async function streamClaudeTurn(hook: StreamHook, baseUrl: string, currency: "USD" | "EUR") {
+async function streamClaudeTurn(
+  hook: StreamHook,
+  baseUrl: string,
+  currency: "USD" | "EUR",
+  reasoning: "low" | "off" = "low",
+) {
   const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => lowRouterSse(currency));
   vi.stubGlobal("fetch", fetchMock);
   const provider = await registerSingleProviderPlugin(lowRouterPlugin);
@@ -155,7 +160,7 @@ async function streamClaudeTurn(hook: StreamHook, baseUrl: string, currency: "US
     },
     {
       apiKey: "fixture",
-      reasoning: "low",
+      reasoning,
       onPayload: (body: unknown) => {
         payload = body as Record<string, unknown>;
         return undefined;
@@ -179,7 +184,6 @@ async function streamClaudeTurn(hook: StreamHook, baseUrl: string, currency: "US
   return { payload, costs, url: String(fetchMock.mock.calls[0]?.[0]) };
 }
 
-
 describe("LowRouter stream hooks", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -199,6 +203,14 @@ describe("LowRouter stream hooks", () => {
       const { payload } = await streamClaudeTurn(hook, LOWROUTER_BASE_URL, "USD");
       expect(payload).toMatchObject({ reasoning_effort: "low" });
       expect(JSON.stringify(payload)).toContain('"cache_control":{"type":"ephemeral"}');
+    },
+  );
+
+  it.each<StreamHook>(["wrapStreamFn", "wrapSimpleCompletionStreamFn"])(
+    "sends no reasoning_effort when thinking is off through %s",
+    async (hook) => {
+      const { payload } = await streamClaudeTurn(hook, LOWROUTER_BASE_URL, "USD", "off");
+      expect(payload).not.toHaveProperty("reasoning_effort");
     },
   );
 

@@ -51,9 +51,9 @@ example `openclaw models set lowrouter/auto/mistralai/mistral-large-2512/eu`.
 
 Context windows, output limits and input types come from `/v1/models`. So do thinking levels:
 a model offers the levels its routes accept, from `auto_routing.reasoning_effort`, and OpenClaw
-sends the one you pick as `reasoning_effort`. A model without a published context window gets 32,768 tokens, so OpenClaw compacts early
-rather than sending a prompt the model rejects. A model without an output limit gets OpenClaw's
-8,192 default.
+sends the one you pick as `reasoning_effort` (none when thinking is off). A model without a
+published context window gets 32,768 tokens, so OpenClaw compacts early rather than sending a
+prompt the model rejects. A model without an output limit gets OpenClaw's 8,192 default.
 
 Without a key or network, OpenClaw uses the snapshot bundled with the release. The snapshot is
 generated from the same endpoint by `npm run gen:catalog`; nothing in it is written by hand.
@@ -75,7 +75,8 @@ Two cases get OpenClaw's own estimate from the USD prices in `/v1/models?currenc
 - A base URL other than `https://api.lowrouter.ai`, which may report euros.
 
 An `auto/` model has several routes at different prices, and the estimate uses the dearest one,
-so it can run high but not low.
+so it can run high. A model typed by ID that is not in the list (a pinned or scoped route) has no
+price in the catalog, so its estimate is zero.
 
 ## Development
 
