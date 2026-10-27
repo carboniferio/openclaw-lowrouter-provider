@@ -1,4 +1,6 @@
 // LowRouter live tests exercise the real API (OPENCLAW_LIVE_TEST + LOWROUTER_LIVE_TEST gated).
+// OpenClaw's own transport package, as its agent runtime streams.
+import { createOpenAICompletionsTransportStreamFn } from "@openclaw/ai/transports";
 import {
   streamSimple,
   type AssistantMessage,
@@ -83,7 +85,7 @@ async function requireLiveModel(modelId: string) {
   return asLiveModel(model);
 }
 
-/** Streams through the plugin's own wrapper, as OpenClaw's agent runtime does. */
+/** Streams an agent turn through the plugin's wrapper and OpenClaw's managed transport. */
 async function streamThroughPlugin(
   model: Model<"openai-completions">,
   context: Context,
@@ -94,7 +96,7 @@ async function streamThroughPlugin(
     provider: "lowrouter",
     modelId: model.id,
     model,
-    streamFn: streamSimple,
+    streamFn: createOpenAICompletionsTransportStreamFn(),
   } as never);
   if (!streamFn) {
     throw new Error("expected a LowRouter stream wrapper");
@@ -103,8 +105,9 @@ async function streamThroughPlugin(
   if (response.stopReason === "error") {
     throw new Error(response.errorMessage || `live completion on ${model.id} failed`);
   }
-  // The EUR total LowRouter bills is not shown as USD.
-  expect(response.usage.cost).not.toHaveProperty("totalOrigin");
+  // LowRouter's billed total, in USD through `?currency=usd`.
+  expect(response.usage.cost).toMatchObject({ totalOrigin: "provider-billed" });
+  expect(response.usage.cost.total).toBeGreaterThan(0);
   return response;
 }
 
@@ -210,7 +213,7 @@ describeLive("LowRouter plugin live", () => {
     const first = await streamThroughPlugin(model, context(), { maxTokens: 16 });
     const second = await streamThroughPlugin(model, context(), { maxTokens: 16 });
     console.info(
-      `[lowrouter:live] ${model.id} cache: write ${first.usage.cacheWrite}, then read ${second.usage.cacheRead} of ${second.usage.input + second.usage.cacheRead}`,
+      `[lowrouter:live] ${model.id} cache: write ${first.usage.cacheWrite} ($${first.usage.cost.total}), then read ${second.usage.cacheRead} of ${second.usage.input + second.usage.cacheRead} ($${second.usage.cost.total})`,
     );
     expect(second.usage.cacheRead).toBeGreaterThan(0);
   }, 120_000);

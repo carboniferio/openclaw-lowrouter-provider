@@ -65,14 +65,17 @@ the cache at the cache-read price.
 ## Cost
 
 LowRouter bills in euros, for the route that served the request. OpenClaw tracks cost in US
-dollars, so the plugin reads USD prices (`?currency=usd`) and OpenClaw shows its own estimate
-from them. An `auto/` model has several routes at different prices, and the plugin uses the
-dearest one. The estimate can still run low on Claude: where LowRouter publishes no cache price,
-cached tokens count as free.
+dollars. On agent turns, the plugin asks LowRouter's API for the cost in dollars
+(`?currency=usd`), and OpenClaw records what you were charged, converted at LowRouter's ECB
+EUR/USD rate. The amounts in euros are on [lowrouter.ai/app](https://lowrouter.ai/app).
 
-Each response's `usage.cost` is the amount charged, in euros. OpenClaw would record that number
-as dollars, so the plugin drops it until LowRouter reports a USD amount. Your charges are on
-[lowrouter.ai/app](https://lowrouter.ai/app).
+Two cases get OpenClaw's own estimate from the USD prices in `/v1/models?currency=usd` instead:
+
+- One-shot completions, because OpenClaw sends them without the `currency` parameter.
+- A base URL other than `https://api.lowrouter.ai`, which may report euros.
+
+An `auto/` model has several routes at different prices, and the estimate uses the dearest one,
+so it can run high but not low.
 
 ## Development
 

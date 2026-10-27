@@ -34,6 +34,7 @@ function liveRow(overrides: Record<string, unknown> = {}): Record<string, unknow
         prompt_per_1m_tokens: { min: 0.4, max: 0.45 },
         completion_per_1m_tokens: { min: 2, max: 2.2 },
         cache_read_per_1m_tokens: { min: 0.04, max: 0.045 },
+        cache_write_per_1m_tokens: { min: 0.5, max: 0.55 },
       },
     },
     ...overrides,
@@ -144,7 +145,7 @@ describe("LowRouter live projection", () => {
       input: ["text", "image"],
       contextWindow: 131_072,
       maxTokens: 32_768,
-      cost: { input: 0.45, output: 2.2, cacheRead: 0.045, cacheWrite: 0 },
+      cost: { input: 0.45, output: 2.2, cacheRead: 0.045, cacheWrite: 0.55 },
       compat: { supportsTools: true, supportsUsageInStreaming: true },
     });
   });

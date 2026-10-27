@@ -95,6 +95,7 @@ type LowRouterLiveModelRow = {
       prompt_per_1m_tokens?: PriceRange;
       completion_per_1m_tokens?: PriceRange;
       cache_read_per_1m_tokens?: PriceRange;
+      cache_write_per_1m_tokens?: PriceRange;
     };
   };
 };
@@ -268,7 +269,7 @@ function projectLiveModel(
       input: readRangeMax(usd?.prompt_per_1m_tokens) ?? fallback?.cost.input ?? 0,
       output: readRangeMax(usd?.completion_per_1m_tokens) ?? fallback?.cost.output ?? 0,
       cacheRead: readRangeMax(usd?.cache_read_per_1m_tokens) ?? fallback?.cost.cacheRead ?? 0,
-      cacheWrite: fallback?.cost.cacheWrite ?? 0,
+      cacheWrite: readRangeMax(usd?.cache_write_per_1m_tokens) ?? fallback?.cost.cacheWrite ?? 0,
     },
     contextWindow,
     maxTokens,
