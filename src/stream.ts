@@ -56,6 +56,10 @@ function withEstimatedCost(underlying: StreamFn): StreamFn {
  * which sends base-URL query parameters with each request, so LowRouter's hosted
  * API is asked for USD and its billed total is kept. Other base URLs get the estimate.
  *
+ * carboniferio/lowrouter#966 makes the hosted-API path safe: for `?currency=usd`,
+ * LowRouter reports `usage.cost` in USD. Dropping the billed total
+ * (`withEstimatedCost`) is the stopgap for one-shot completions and other base URLs.
+ *
  * With a provider wrapper in place, OpenClaw skips its own DeepSeek V4 and MiMo
  * thinking-payload wrappers. LowRouter takes `reasoning_effort` for those models
  * instead, and tool-calling turns with thinking on and off work through it.
