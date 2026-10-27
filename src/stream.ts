@@ -27,11 +27,11 @@ function lowRouterUsdBaseUrl(baseUrl: string | undefined): string | undefined {
 }
 
 /**
- * For a request that may report `usage.cost` in EUR, which OpenClaw would record as
- * the provider-billed total in USD: puts back the sum of the per-token parts, which
- * OpenClaw priced from the USD catalog, so OpenClaw shows its own USD estimate.
- * OpenClaw drops the response's `currency` before any plugin hook sees it, so this
- * cannot be decided per response.
+ * OpenClaw records `usage.cost` as the provider-billed total in USD, and a request
+ * sent without `?currency=usd` may report it in EUR. This resets the total to the sum
+ * of the per-token parts, which OpenClaw priced from the USD catalog, so OpenClaw
+ * shows its own USD estimate. OpenClaw drops the response's `currency` before any
+ * plugin hook sees it, so the plugin cannot decide this per response.
  */
 function dropProviderBilledCost(message: unknown): void {
   const cost = asOptionalRecord(asOptionalRecord(asOptionalRecord(message)?.usage)?.cost);
@@ -58,7 +58,7 @@ function withEstimatedCost(underlying: StreamFn): StreamFn {
  *
  * With a provider wrapper in place, OpenClaw skips its own DeepSeek V4 and MiMo
  * thinking-payload wrappers. LowRouter takes `reasoning_effort` for those models
- * and needs neither: tool-calling turns with thinking on and off pass through it.
+ * instead, and tool-calling turns with thinking on and off work through it.
  */
 export function wrapLowRouterStreamFn(ctx: ProviderWrapStreamFnContext): StreamFn {
   if (!ctx.streamFn) {

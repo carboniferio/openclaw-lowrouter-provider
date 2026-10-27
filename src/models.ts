@@ -140,10 +140,10 @@ function isClaudeModelId(id: string): boolean {
 
 /**
  * Compat for one model. OpenClaw sends no `reasoning_effort` to a non-OpenAI base
- * URL unless told to, so it is turned on for a model with published effort levels,
- * and only those: listed as `supportedReasoningEfforts`, they keep OpenClaw from
- * sending an unpublished `"none"` for the `off` level. A model without them gets
- * no effort, as before.
+ * URL unless told to, so a model with published effort levels turns it on and lists
+ * them as `supportedReasoningEfforts`. The list stops OpenClaw from sending an
+ * unpublished `"none"` for the `off` level. A model without published levels gets
+ * no effort.
  */
 function modelCompat(claude: boolean, levels?: ThinkingLevelMap): ModelCompatConfig {
   const efforts = levels
