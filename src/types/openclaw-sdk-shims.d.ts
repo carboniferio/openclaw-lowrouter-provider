@@ -156,3 +156,17 @@ declare module "openclaw/plugin-sdk/provider-onboard" {
   export function resolveAgentModelPrimaryValue(value: unknown): string | undefined;
 }
 
+declare module "openclaw/plugin-sdk/llm" {
+  import type { ProviderPlugin } from "openclaw/plugin-sdk/plugin-entry";
+
+  export type StreamFn = NonNullable<ReturnType<NonNullable<ProviderPlugin["wrapStreamFn"]>>>;
+  export const streamSimple: StreamFn;
+}
+
+declare module "openclaw/plugin-sdk/provider-stream-shared" {
+  /** Mutates streamed and final message objects without replacing or buffering events. */
+  export function transformProviderStreamMessages<T>(
+    stream: T,
+    transformMessage: (message: unknown) => void,
+  ): T;
+}

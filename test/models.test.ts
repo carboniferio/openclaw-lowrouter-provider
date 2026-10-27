@@ -7,6 +7,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildStaticLowRouterModels,
+  isLowRouterCacheTtlModelId,
   isPickerModelId,
   LOWROUTER_BASE_URL,
   LOWROUTER_DEFAULT_MODEL_ID,
@@ -33,6 +34,7 @@ function liveRow(overrides: Record<string, unknown> = {}): Record<string, unknow
         prompt_per_1m_tokens: { min: 0.4, max: 0.45 },
         completion_per_1m_tokens: { min: 2, max: 2.2 },
         cache_read_per_1m_tokens: { min: 0.04, max: 0.045 },
+        cache_write_per_1m_tokens: { min: 0.5, max: 0.55 },
       },
     },
     ...overrides,
@@ -76,13 +78,22 @@ describe("LowRouter bundled catalog", () => {
         supportsUsageInStreaming: true,
         supportsTools: true,
       });
+      expect(model.compat?.supportsReasoningEffort, model.id).toBe(
+        model.thinkingLevelMap ? true : undefined,
+      );
+      expect(model.compat?.cacheControlFormat, model.id).toBe(
+        model.id.startsWith("auto/anthropic/") ? "anthropic" : undefined,
+      );
+      expect(model.reasoning, model.id).toBe(model.thinkingLevelMap !== undefined);
     }
+    expect(models.some((model) => model.compat?.cacheControlFormat === "anthropic")).toBe(true);
   });
 
   it("matches what the generator would write for its own rows", () => {
     // Projecting the bundled rows back through the live path must be a no-op on
     // the fields the generator writes (the bundled catalog is the projection).
-    const bundled = LOWROUTER_MODEL_CATALOG[0]!;
+    const bundled = LOWROUTER_MODEL_CATALOG.find((model) => model.thinkingLevelMap)!;
+    const map: Record<string, string | null> = bundled.thinkingLevelMap!;
     const [model] = projectLowRouterLiveModels(
       [
         liveRow({
@@ -90,7 +101,7 @@ describe("LowRouter bundled catalog", () => {
           name: bundled.name,
           context_length: bundled.contextWindow,
           max_output_tokens: bundled.maxTokens,
-          auto_routing: {},
+          auto_routing: { reasoning_effort: Object.values(map).filter(Boolean) },
           capabilities: { function_calling: true, input_modalities: bundled.input },
         }),
       ],
@@ -99,10 +110,12 @@ describe("LowRouter bundled catalog", () => {
     expect(model).toMatchObject({
       id: bundled.id,
       name: bundled.name,
+      reasoning: true,
       contextWindow: bundled.contextWindow,
       maxTokens: bundled.maxTokens,
       input: bundled.input,
     });
+    expect(model?.thinkingLevelMap).toEqual(map);
   });
 });
 
@@ -134,7 +147,7 @@ describe("LowRouter live projection", () => {
       input: ["text", "image"],
       contextWindow: 131_072,
       maxTokens: 32_768,
-      cost: { input: 0.45, output: 2.2, cacheRead: 0.045, cacheWrite: 0 },
+      cost: { input: 0.45, output: 2.2, cacheRead: 0.045, cacheWrite: 0.55 },
       compat: { supportsTools: true, supportsUsageInStreaming: true },
     });
   });
@@ -211,18 +224,95 @@ describe("LowRouter live projection", () => {
     expect(blank?.name).toBe("auto/a/three");
   });
 
-  it("marks a model as reasoning when the API lists a reasoning control", () => {
-    const [effort, plain, unknown] = projectLowRouterLiveModels(
+  it("offers the thinking levels the routes publish in auto_routing.reasoning_effort", () => {
+    const [some, all, none, unlisted] = projectLowRouterLiveModels(
       [
-        liveRow({ id: "auto/a/effort", supported_parameters: ["tools", "reasoning_effort"] }),
-        liveRow({ id: "auto/a/plain", supported_parameters: ["tools", "tool_choice"] }),
-        liveRow({ id: "auto/a/unknown", supported_parameters: undefined }),
+        liveRow({ id: "auto/a/some", auto_routing: { reasoning_effort: ["low", "high"] } }),
+        liveRow({
+          id: "auto/a/all",
+          auto_routing: { reasoning_effort: ["minimal", "low", "medium", "high", "xhigh"] },
+        }),
+        // `supported_parameters` does not apply once `auto_routing` is published.
+        liveRow({
+          id: "auto/a/none",
+          auto_routing: { reasoning_effort: [] },
+          supported_parameters: ["reasoning_effort"],
+        }),
+        liveRow({ id: "auto/a/unlisted", auto_routing: { reasoning_effort: ["none", "max"] } }),
       ],
       { useBundledFallbacks: false },
     );
-    expect(effort?.reasoning).toBe(true);
+    expect(some).toMatchObject({
+      reasoning: true,
+      thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high" },
+    });
+    expect(some?.thinkingLevelMap).not.toHaveProperty("xhigh");
+    // OpenClaw then sends no effort for `off` rather than an unpublished "none".
+    expect(some?.compat?.supportedReasoningEfforts).toEqual(["low", "high"]);
+    expect(all?.thinkingLevelMap).toEqual({
+      minimal: "minimal",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+    });
+    for (const model of [none, unlisted]) {
+      expect(model?.reasoning, model?.id).toBe(false);
+      expect(model, model?.id).not.toHaveProperty("thinkingLevelMap");
+    }
+  });
+
+  it("falls back to supported_parameters, then the bundled row, without auto_routing", () => {
+    const bundled = LOWROUTER_MODEL_CATALOG.find((model) => model.thinkingLevelMap)!;
+    const [effort, plain, known] = projectLowRouterLiveModels([
+      liveRow({ id: "alias/effort", auto_routing: undefined, supported_parameters: ["reasoning"] }),
+      liveRow({ id: "alias/plain", auto_routing: undefined, supported_parameters: ["tools"] }),
+      liveRow({ id: bundled.id, auto_routing: undefined }),
+    ]);
+    expect(effort).toMatchObject({ reasoning: true });
+    expect(effort).not.toHaveProperty("thinkingLevelMap");
+    // Without published levels OpenClaw sends no effort at all.
+    expect(effort?.compat).not.toHaveProperty("supportsReasoningEffort");
     expect(plain?.reasoning).toBe(false);
-    expect(unknown?.reasoning).toBe(false);
+    expect(known).toMatchObject({ reasoning: true, thinkingLevelMap: bundled.thinkingLevelMap });
+
+    // A published list wins over the bundled row, which keeps its levels only when allowed.
+    const [denied] = projectLowRouterLiveModels([
+      liveRow({ id: bundled.id, auto_routing: undefined, supported_parameters: ["tools"] }),
+    ]);
+    expect(denied?.reasoning).toBe(false);
+    expect(denied?.compat).not.toHaveProperty("supportsReasoningEffort");
+    const [allowed] = projectLowRouterLiveModels([
+      liveRow({ id: bundled.id, auto_routing: undefined, supported_parameters: ["reasoning_effort"] }),
+    ]);
+    expect(allowed).toMatchObject({ reasoning: true, thinkingLevelMap: bundled.thinkingLevelMap });
+  });
+
+  it("marks Claude and aliases to Claude for prompt caching", () => {
+    const [claude, toClaude, toOther, other] = projectLowRouterLiveModels(
+      [
+        liveRow({ id: "auto/anthropic/claude-fixture" }),
+        liveRow({ id: "alias/Writer", alias_target: "auto/anthropic/claude-fixture" }),
+        liveRow({ id: "alias/coder", alias_target: "auto/mistralai/mistral-large-2512" }),
+        liveRow({ id: "auto/mistralai/mistral-fixture" }),
+      ],
+      { useBundledFallbacks: false },
+    );
+    expect(claude?.compat?.cacheControlFormat).toBe("anthropic");
+    expect(toClaude?.compat?.cacheControlFormat).toBe("anthropic");
+    expect(toOther?.compat).not.toHaveProperty("cacheControlFormat");
+    expect(other?.compat).not.toHaveProperty("cacheControlFormat");
+    // OpenClaw passes the cache-TTL hook a lowercased id.
+    expect(isLowRouterCacheTtlModelId("auto/anthropic/claude-fixture")).toBe(true);
+    expect(isLowRouterCacheTtlModelId("alias/writer")).toBe(true);
+    expect(isLowRouterCacheTtlModelId("alias/coder")).toBe(false);
+    expect(isLowRouterCacheTtlModelId("auto/mistralai/mistral-fixture")).toBe(false);
+
+    // An alias pointed elsewhere stops being Claude at the next discovery.
+    projectLowRouterLiveModels([
+      liveRow({ id: "alias/Writer", alias_target: "auto/mistralai/mistral-large-2512" }),
+    ]);
+    expect(isLowRouterCacheTtlModelId("alias/writer")).toBe(false);
   });
 
   it("does not consult bundled rows when generating the snapshot", () => {
@@ -283,5 +373,12 @@ describe("LowRouter dynamic models", () => {
       compat: { supportsTools: true },
     });
     expect(resolveLowRouterDynamicModel("  ")).toBeUndefined();
+  });
+
+  it("caches prompts on a scoped Claude id", () => {
+    expect(resolveLowRouterDynamicModel("auto/anthropic/claude-opus-5/eu")).toMatchObject({
+      compat: { cacheControlFormat: "anthropic" },
+    });
+    expect(isLowRouterCacheTtlModelId("auto/anthropic/claude-opus-5/eu")).toBe(true);
   });
 });
